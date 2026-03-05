@@ -1,0 +1,9 @@
+# Render Blueprint: use "New > Web Service" and connect this repo,
+# or use this file for Infrastructure as Code.
+services:
+  - type: web
+    name: excel2ics
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT app:app
+    envVars: []
