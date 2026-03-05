@@ -5,6 +5,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import openpyxl
 from flask import Flask, request, send_file, jsonify
 
 from excel2ics import extract_classes_for_teacher, classes_to_ics
@@ -42,20 +43,33 @@ def convert():
     if not teachers:
         return jsonify({"error": "Enter at least one teacher code"}), 400
 
+    sheet_name = request.form.get("sheet", "").strip() or "06 Timeplan"
+    tmp_path = None
+
     try:
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             file.save(tmp.name)
             tmp_path = tmp.name
 
+        # Check that the sheet exists and give a helpful error if not
+        wb = openpyxl.load_workbook(tmp_path, data_only=True, read_only=True)
+        if sheet_name not in wb.sheetnames:
+            wb.close()
+            return jsonify({
+                "error": f"Sheet '{sheet_name}' not found. Available sheets: {', '.join(wb.sheetnames)}"
+            }), 400
+        wb.close()
+
         results = {}
         for teacher in teachers:
-            classes = extract_classes_for_teacher(tmp_path, teacher)
+            classes = extract_classes_for_teacher(tmp_path, teacher, sheet_name=sheet_name)
             ics_content = classes_to_ics(classes, teacher)
             results[teacher] = ics_content
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
 
     if len(teachers) == 1:
         teacher = teachers[0]
