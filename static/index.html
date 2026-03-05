@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Timeplan → ICS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0908;
+      --bg-mid: #121110;
+      --surface: rgba(22, 21, 19, 0.85);
+      --surface-border: rgba(255, 255, 255, 0.06);
+      --text: #f5f3f0;
+      --text-soft: #a8a29e;
+      --muted: #78716c;
+      --accent: #0d9488;
+      --accent-bright: #2dd4bf;
+      --accent-glow: rgba(13, 148, 136, 0.35);
+      --amber: #f59e0b;
+      --success: #10b981;
+      --success-soft: rgba(16, 185, 129, 0.15);
+      --error: #f43f5e;
+      --error-soft: rgba(244, 63, 94, 0.15);
+      --radius: 14px;
+      --radius-sm: 10px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2.5rem 1.25rem;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 120% 80% at 50% -20%, rgba(13, 148, 136, 0.08), transparent 50%),
+        radial-gradient(ellipse 80% 50% at 80% 100%, rgba(245, 158, 11, 0.04), transparent 45%),
+        var(--bg);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    main {
+      width: 100%;
+      max-width: 520px;
+      position: relative;
+      z-index: 1;
+      animation: fadeInUp 0.7s ease-out;
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(16px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .hero {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .hero-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, var(--accent) 0%, #0f766e 100%);
+      border-radius: 14px;
+      box-shadow: 0 8px 32px var(--accent-glow);
+      animation: fadeInUp 0.6s ease-out 0.1s both;
+    }
+    .hero-icon svg {
+      width: 26px;
+      height: 26px;
+      stroke: white;
+    }
+
+    h1 {
+      font-family: "Outfit", sans-serif;
+      font-size: 1.85rem;
+      font-weight: 700;
+      margin: 0 0 0.4rem 0;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, var(--text) 0%, var(--text-soft) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: fadeInUp 0.6s ease-out 0.15s both;
+    }
+
+    .subtitle {
+      color: var(--text-soft);
+      font-size: 0.95rem;
+      line-height: 1.5;
+      margin: 0;
+      max-width: 36ch;
+      margin-left: auto;
+      margin-right: auto;
+      animation: fadeInUp 0.6s ease-out 0.2s both;
+    }
+
+    .steps {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+      margin-top: 1.5rem;
+      animation: fadeInUp 0.6s ease-out 0.25s both;
+    }
+    .step {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .step:not(:last-child)::after {
+      content: "→";
+      margin-left: 0.5rem;
+      color: var(--muted);
+      opacity: 0.6;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 1.6rem;
+      margin-bottom: 1.25rem;
+      backdrop-filter: blur(12px);
+      transition: border-color 0.25s ease, box-shadow 0.25s ease;
+      animation: fadeInUp 0.6s ease-out both;
+    }
+    .card:nth-child(1) { animation-delay: 0.25s; }
+    .card:nth-child(2) { animation-delay: 0.32s; }
+    .card:hover {
+      border-color: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+    }
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-soft);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.65rem;
+    }
+    label .label-num {
+      width: 20px;
+      height: 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(13, 148, 136, 0.2);
+      color: var(--accent-bright);
+      border-radius: 6px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.7rem;
+    }
+
+    .dropzone {
+      border: 2px dashed var(--surface-border);
+      border-radius: var(--radius-sm);
+      padding: 2rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.25s, background 0.25s, transform 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .dropzone::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 50% 50%, rgba(13, 148, 136, 0.04) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.25s;
+    }
+    .dropzone:hover {
+      border-color: rgba(13, 148, 136, 0.4);
+      background: rgba(13, 148, 136, 0.04);
+      transform: translateY(-1px);
+    }
+    .dropzone:hover::before {
+      opacity: 1;
+    }
+    .dropzone.dragover {
+      border-color: var(--accent);
+      background: rgba(13, 148, 136, 0.08);
+      box-shadow: 0 0 0 1px rgba(13, 148, 136, 0.2);
+    }
+    .dropzone.has-file {
+      border-color: rgba(16, 185, 129, 0.5);
+      background: var(--success-soft);
+    }
+    .dropzone .dropzone-icon {
+      width: 40px;
+      height: 40px;
+      margin: 0 auto 0.75rem;
+      color: var(--muted);
+      transition: color 0.25s;
+    }
+    .dropzone:hover .dropzone-icon {
+      color: var(--accent-bright);
+    }
+    .dropzone.has-file .dropzone-icon {
+      color: var(--success);
+    }
+    .dropzone p {
+      margin: 0;
+      color: var(--text-soft);
+      font-size: 0.9rem;
+    }
+    .dropzone .filename {
+      margin-top: 0.6rem;
+      color: var(--accent-bright);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 0.85rem 1.1rem;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.95rem;
+      background: var(--bg-mid);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input[type="text"]::placeholder {
+      color: var(--muted);
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.5rem;
+      line-height: 1.4;
+    }
+
+    .btn-wrap {
+      margin-top: 0.5rem;
+      animation: fadeInUp 0.6s ease-out 0.4s both;
+    }
+
+    button {
+      width: 100%;
+      padding: 1rem 1.5rem;
+      font-family: "Outfit", sans-serif;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #0c0b0a;
+      background: linear-gradient(135deg, var(--accent-bright) 0%, var(--accent) 100%);
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.25s ease, opacity 0.2s;
+      box-shadow: 0 4px 20px var(--accent-glow);
+      position: relative;
+      overflow: hidden;
+    }
+    button::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 50%);
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px var(--accent-glow);
+    }
+    button:hover:not(:disabled)::after {
+      opacity: 1;
+    }
+    button:active:not(:disabled) {
+      transform: translateY(0);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .message {
+      margin-top: 1.25rem;
+      padding: 0.9rem 1.1rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.9rem;
+      animation: fadeInUp 0.35s ease-out;
+    }
+    .message.error {
+      background: var(--error-soft);
+      color: #fda4af;
+      border: 1px solid rgba(244, 63, 94, 0.25);
+    }
+    .message.success {
+      background: var(--success-soft);
+      color: #6ee7b7;
+      border: 1px solid rgba(16, 185, 129, 0.25);
+    }
+
+    .footer {
+      margin-top: 2.5rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.5;
+      animation: fadeInUp 0.6s ease-out 0.45s both;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div class="hero-icon" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 2v4M16 2v4M3 10h18M5 4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H5Z"/>
+          <path d="M3 14h18"/>
+        </svg>
+      </div>
+      <h1>Timeplan → ICS</h1>
+      <p class="subtitle">Upload the building school Excel timeplan and download calendar files for each teacher.</p>
+      <div class="steps" aria-hidden="true">
+        <span class="step">Upload</span>
+        <span class="step">Teachers</span>
+        <span class="step">Download</span>
+      </div>
+    </header>
+
+    <form id="form">
+      <div class="card">
+        <label for="file"><span class="label-num">1</span> Excel file</label>
+        <div class="dropzone" id="dropzone" role="button" tabindex="0">
+          <div class="dropzone-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <p>Drop your file here or click to choose</p>
+          <p class="filename" id="filename"></p>
+        </div>
+        <input type="file" id="file" name="file" accept=".xlsx,.xls" required />
+      </div>
+
+      <div class="card">
+        <label for="teachers"><span class="label-num">2</span> Teacher code(s)</label>
+        <input
+          type="text"
+          id="teachers"
+          name="teachers"
+          placeholder="e.g. RS7, RS4"
+          required
+        />
+        <p class="hint">One or more teacher codes as they appear in the timeplan, comma-separated.</p>
+      </div>
+
+      <div class="btn-wrap">
+        <button type="submit" id="submit" disabled>Generate &amp; download .ics</button>
+      </div>
+    </form>
+
+    <div id="message" class="message" role="alert" hidden></div>
+    <p class="footer">Uses the &quot;06 Timeplan&quot; sheet. Import the .ics into Google Calendar, Outlook, or Apple Calendar.</p>
+  </main>
+
+  <script>
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("file");
+    const filenameEl = document.getElementById("filename");
+    const teachersInput = document.getElementById("teachers");
+    const form = document.getElementById("form");
+    const submitBtn = document.getElementById("submit");
+    const messageEl = document.getElementById("message");
+
+    function hideMessage() {
+      messageEl.hidden = true;
+      messageEl.className = "message";
+      messageEl.textContent = "";
+    }
+
+    function showMessage(text, type) {
+      messageEl.textContent = text;
+      messageEl.className = "message " + type;
+      messageEl.hidden = false;
+    }
+
+    function updateSubmitState() {
+      submitBtn.disabled = !fileInput.files?.length || !teachersInput.value.trim();
+    }
+
+    dropzone.addEventListener("click", () => fileInput.click());
+
+    dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropzone.classList.add("dragover");
+    });
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      const files = e.dataTransfer?.files;
+      if (files?.length) {
+        fileInput.files = files;
+        filenameEl.textContent = files[0].name;
+        dropzone.classList.add("has-file");
+        updateSubmitState();
+      }
+    });
+
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files?.length) {
+        filenameEl.textContent = fileInput.files[0].name;
+        dropzone.classList.add("has-file");
+      } else {
+        filenameEl.textContent = "";
+        dropzone.classList.remove("has-file");
+      }
+      updateSubmitState();
+    });
+
+    teachersInput.addEventListener("input", updateSubmitState);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      hideMessage();
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Generating…";
+
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+      formData.append("teachers", teachersInput.value.trim());
+
+      try {
+        const res = await fetch("/api/convert", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || res.statusText || "Conversion failed");
+        }
+
+        const blob = await res.blob();
+        const disposition = res.headers.get("Content-Disposition");
+        let name = "calendar.ics";
+        if (disposition) {
+          const match = disposition.match(/filename="?([^";\n]+)"?/);
+          if (match) name = match[1].trim();
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        const teachers = teachersInput.value.split(",").map((t) => t.trim()).filter(Boolean);
+        if (teachers.length > 1) {
+          showMessage("Downloaded " + teachers.length + " calendars as a ZIP.", "success");
+        } else {
+          showMessage("Calendar downloaded.", "success");
+        }
+      } catch (err) {
+        showMessage(err.message || "Something went wrong.", "error");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Generate & download .ics";
+        updateSubmitState();
+      }
+    });
+  </script>
+</body>
+</html>
