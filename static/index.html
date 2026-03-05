@@ -407,13 +407,24 @@
         <p class="hint">One or more teacher codes as they appear in the timeplan, comma-separated.</p>
       </div>
 
+      <div class="card">
+        <label for="sheet"><span class="label-num">3</span> Sheet name (optional)</label>
+        <input
+          type="text"
+          id="sheet"
+          name="sheet"
+          placeholder="e.g. 06 Timeplan (leave blank for default)"
+        />
+        <p class="hint">Excel sheet that contains the timeplan. If your file uses a different sheet name, enter it here. Default is &quot;06 Timeplan&quot;.</p>
+      </div>
+
       <div class="btn-wrap">
         <button type="submit" id="submit" disabled>Generate &amp; download .ics</button>
       </div>
     </form>
 
     <div id="message" class="message" role="alert" hidden></div>
-    <p class="footer">Uses the &quot;06 Timeplan&quot; sheet. Import the .ics into Google Calendar, Outlook, or Apple Calendar.</p>
+    <p class="footer">Uses the timeplan sheet you specify (default &quot;06 Timeplan&quot;). Import the .ics into Google Calendar, Outlook, or Apple Calendar.</p>
   </main>
 
   <script>
@@ -482,6 +493,10 @@
       const formData = new FormData();
       formData.append("file", fileInput.files[0]);
       formData.append("teachers", teachersInput.value.trim());
+      const sheetInput = document.getElementById("sheet");
+      if (sheetInput && sheetInput.value.trim()) {
+        formData.append("sheet", sheetInput.value.trim());
+      }
 
       try {
         const res = await fetch("/api/convert", {
