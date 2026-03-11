@@ -25,7 +25,7 @@ Structure:
 - Teacher columns are offset +1 from day start (columns 9, 12 for Monday, etc.)
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 from typing import NamedTuple
@@ -40,7 +40,8 @@ class ClassSession(NamedTuple):
     start_time: str
     end_time: str
     subject: str
-    teacher: str
+    teacher_name: str
+    teacher_code: str
     student_group: str
     room: str | None
 
@@ -223,21 +224,27 @@ def count_class_rows(ws, date_row: int, current_row: int, col: int) -> int:
     return count
 
 
-def calculate_time_slot(class_row_count: int) -> tuple[str, str] | None:
-    """Calculate start and end time based on the class row count.
+def calculate_time_slot(
+    class_row_count: int, class_date: datetime | None = None
+) -> tuple[str, str] | None:
+    """Calculate start and end time based on row offset from date row.
 
     Time slots:
-    - Classes start at 8:00 AM
-    - Each class is 90 minutes
-    - 15-minute break between classes
-    - No classes between 15:00-16:00
+    - Saturday: single slot 9:00-15:00
+    - Other days: class_row_count = row - date_row; if <= 6 → morning slot,
+      otherwise afternoon slot.
 
     Args:
-        class_row_count: Number of class rows from date to current cell (1-based)
+        class_row_count: Row difference (row - date_row). <= 6 → morning, else afternoon.
+        class_date: Date of the class (used to detect Saturday)
 
     Returns:
         Tuple of (start_time, end_time) or None if invalid
     """
+    # Saturday: single slot 9:00-15:00
+    if class_date is not None and class_date.weekday() == 5:
+        return ("09:00", "15:00")
+
     # Time slots before 15:00
     # Based on user example: 3rd slot is 11:45-13:15 (longer break before slot 3)
     morning_slots = [
@@ -249,23 +256,18 @@ def calculate_time_slot(class_row_count: int) -> tuple[str, str] | None:
 
     # Time slots after 16:00 (no classes 15:00-16:00)
     afternoon_slots = [
-        ("16:00", "17:30"),  # Slot 5
-        ("17:45", "19:15"),  # Slot 6
-        ("19:30", "21:00"),  # Slot 7
-        ("21:15", "22:45"),  # Slot 8 (if exists)
+        ("16:30", "20:00"),  # Slot 5
     ]
 
-    if class_row_count < 1:
+    if class_row_count < 0:
+        print(f"Invalid class_row_count: {class_row_count}")
         return None
 
-    if class_row_count <= len(morning_slots):
-        return morning_slots[class_row_count - 1]
-
-    afternoon_index = class_row_count - len(morning_slots) - 1
-    if 0 <= afternoon_index < len(afternoon_slots):
-        return afternoon_slots[afternoon_index]
-
-    return None
+    # Morning: row offset <= 6; afternoon: > 6. Map 1–6 to morning slots (1–4).
+    if class_row_count <= 6:
+        slot_index = min(class_row_count, len(morning_slots))
+        return morning_slots[slot_index]
+    return afternoon_slots[0]
 
 
 def _merge_sequential_slots(classes: list[ClassSession]) -> list[ClassSession]:
@@ -287,10 +289,10 @@ def _merge_sequential_slots(classes: list[ClassSession]) -> list[ClassSession]:
     if not classes:
         return classes
 
-    # Sort by date, subject, group, teacher, then start time
+    # Sort by date, subject, group, teacher_code, then start time
     sorted_classes = sorted(
         classes,
-        key=lambda c: (c.date.date(), c.subject, c.student_group, c.teacher, c.start_time),
+        key=lambda c: (c.date.date(), c.subject, c.student_group, c.teacher_code, c.start_time),
     )
 
     merged: list[ClassSession] = []
@@ -301,7 +303,7 @@ def _merge_sequential_slots(classes: list[ClassSession]) -> list[ClassSession]:
         same_date = current.date.date() == next_class.date.date()
         same_subject = current.subject == next_class.subject
         same_group = current.student_group == next_class.student_group
-        same_teacher = current.teacher == next_class.teacher
+        same_teacher = current.teacher_code == next_class.teacher_code
 
         if same_date and same_subject and same_group and same_teacher:
             # Parse times to check if sequential
@@ -321,7 +323,8 @@ def _merge_sequential_slots(classes: list[ClassSession]) -> list[ClassSession]:
                     start_time=current.start_time,
                     end_time=next_class.end_time,
                     subject=current.subject,
-                    teacher=current.teacher,
+                    teacher_name=current.teacher_name,
+                    teacher_code=current.teacher_code,
                     student_group=current.student_group,
                     room=current.room or next_class.room,  # Use first non-None room
                 )
@@ -339,19 +342,24 @@ def _merge_sequential_slots(classes: list[ClassSession]) -> list[ClassSession]:
 
 def extract_classes_for_teacher(
     excel_path: str,
-    teacher_name: str,
+    teacher_code: str,
+    teacher_name: str | None = None,
     sheet_name: str = "06 Timeplan",
 ) -> list[ClassSession]:
     """Extract all classes for a specific teacher from the timeplan.
 
     Args:
         excel_path: Path to the Excel file
-        teacher_name: Teacher identifier (e.g., "RS7", "RS4")
+        teacher_code: String to search for in the Excel (e.g. "RS7", "RS4")
+        teacher_name: Name to use in the ICS/calendar; if None, defaults to teacher_code
         sheet_name: Name of the sheet containing the timeplan
 
     Returns:
         List of ClassSession objects
     """
+    if teacher_name is None:
+        teacher_name = teacher_code
+
     wb = openpyxl.load_workbook(excel_path, data_only=True)
     ws = wb[sheet_name]
 
@@ -360,16 +368,16 @@ def extract_classes_for_teacher(
 
     max_row = ws.max_row or 1
 
-    # Step 1: Find all cells containing the teacher name in calendar area
-    print(f"Searching for '{teacher_name}' in columns A-AQ...")
+    # Step 1: Find all cells containing the teacher code in calendar area
+    print(f"Searching for '{teacher_code}' in columns A-AQ...")
     interesting_cells = []
     for row in range(1, max_row + 1):
         for col in range(1, MAX_CALENDAR_COLUMN + 1):
             cell = ws.cell(row=row, column=col)
-            if cell.value and teacher_name in str(cell.value):
+            if cell.value and teacher_code in str(cell.value):
                 interesting_cells.append((row, col, str(cell.value)))
 
-    print(f"Found {len(interesting_cells)} cells with '{teacher_name}'")
+    print(f"Found {len(interesting_cells)} cells with '{teacher_code}'")
 
     # Deduplicate consecutive rows in same column (merged cells)
     # Keep only the first row of each merged cell group
@@ -386,9 +394,11 @@ def extract_classes_for_teacher(
             continue
         class_date, date_row = date_info
 
-        # 2-c) Count class rows from date cell to current cell
-        class_row_count = count_class_rows(ws, date_row, row, col)
-        time_slot = calculate_time_slot(class_row_count)
+        # 2-c) Row offset from date row: <= 6 → morning slot, otherwise afternoon
+        class_row_count = (
+            row - date_row - 2
+        )  # -2 because the first two rows are the date and the group
+        time_slot = calculate_time_slot(class_row_count, class_date)
         if time_slot is None:
             continue
         start_time, end_time = time_slot
@@ -405,7 +415,7 @@ def extract_classes_for_teacher(
             class_date.date(),
             start_time,
             end_time,
-            teacher_value,
+            teacher_code,
             subject,
             student_group,
         )
@@ -419,7 +429,8 @@ def extract_classes_for_teacher(
                 start_time=start_time,
                 end_time=end_time,
                 subject=subject,
-                teacher=teacher_value,
+                teacher_name=teacher_name,
+                teacher_code=teacher_code,
                 student_group=student_group or "Unknown",
                 room=room,
             )
@@ -438,23 +449,67 @@ def extract_classes_for_teacher(
     return classes
 
 
-def classes_to_ics(classes: list[ClassSession], teacher_name: str) -> str:
+def _escape_ics_param(value: str) -> str:
+    """Escape a value for use in ICS property parameters (e.g. CN=)."""
+    if ";" in value or "," in value or "\\" in value or '"' in value:
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return value
+
+
+def _escape_ics_text(value: str) -> str:
+    """Escape text for ICS property values (SUMMARY, DESCRIPTION, etc.)."""
+    return value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+def _fold_ics_line(line: str, max_len: int = 75) -> str:
+    """Fold a long ICS content line per RFC 5545 (CRLF + space for continuation)."""
+    if len(line) <= max_len:
+        return line
+    folded = [line[:max_len]]
+    rest = line[max_len:]
+    while rest:
+        folded.append(" " + rest[: max_len - 1])
+        rest = rest[max_len - 1 :]
+    return "\r\n".join(folded)
+
+
+def _safe_uid(uid: str) -> str:
+    """Ensure UID only contains characters safe for Outlook (no spaces, minimal set)."""
+    return "".join(c for c in uid if c.isalnum() or c in "-._@")
+
+
+def classes_to_ics(
+    classes: list[ClassSession],
+    teacher_name: str,
+    teacher_code: str | None = None,
+    method: str = "METHOD:PUBLISH",
+    invite_emails: bool = False,
+    organizer_email: str | None = None,
+) -> str:
     """Convert a list of ClassSession objects to ICS format.
 
     Args:
         classes: List of class sessions
-        teacher_name: Name of the teacher for the calendar
+        teacher_name: Display name of the teacher for the calendar
+        teacher_code: Code used in Excel (e.g. RS7); included in calendar if provided
+        method: METHOD:PUBLISH (importable file) or METHOD:REQUEST (meeting request).
+        invite_emails: If True, add ORGANIZER and ATTENDEE so one file can be shared with all.
+        organizer_email: Email of the meeting organizer (teacher); used when invite_emails=True.
 
     Returns:
         ICS file content as string
     """
+    calendar_title = f"{teacher_name} Schedule"
+    if teacher_code and teacher_code != teacher_name:
+        calendar_title = f"{teacher_name} ({teacher_code}) Schedule"
+
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//Building School//Timeplan//EN",
-        f"X-WR-CALNAME:{teacher_name} Schedule",
+        f"X-WR-CALNAME:{_escape_ics_text(calendar_title)}",
         "CALSCALE:GREGORIAN",
-        "METHOD:PUBLISH",
+        method,
     ]
 
     for i, session in enumerate(classes):
@@ -469,77 +524,185 @@ def classes_to_ics(classes: list[ClassSession], teacher_name: str) -> str:
         start_str = start_dt.strftime("%Y%m%dT%H%M%S")
         end_str = end_dt.strftime("%Y%m%dT%H%M%S")
 
-        # Create unique ID
-        uid = f"{start_str}-{i}-{teacher_name}@buildingschool.no"
+        # Create unique ID (Outlook is picky: use safe chars only)
+        uid = _safe_uid(f"{start_str}-{i}-{teacher_name}@buildingschool.no")
 
-        # Build summary and description
-        summary = f" {teacher_name} -  {session.subject} - {session.student_group}"
-        description = f"Teacher: {session.teacher}"
+        # DTSTAMP is required by RFC 5545; Outlook requires it (UTC with Z)
+        dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+        # Build summary and description from each session's own teacher_name and teacher_code
+        summary = f" {session.teacher_name}"
+        if session.teacher_code and session.teacher_code != session.teacher_name:
+            summary += f" ({session.teacher_code})"
+        summary += f" -  {session.subject} - {session.student_group}"
+
+        description = f"Teacher: {session.teacher_name}"
+        if session.teacher_code and session.teacher_code != session.teacher_name:
+            description += f" ({session.teacher_code})"
         if session.room:
-            description += f"\\nRoom: {session.room}"
+            description += "\nRoom: " + session.room
 
-        location = session.room or ""
+        event_lines = [
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{dtstamp}",
+            f"DTSTART:{start_str}",
+            f"DTEND:{end_str}",
+            f"SUMMARY:{_escape_ics_text(summary)}",
+            f"DESCRIPTION:{_escape_ics_text(description)}",
+        ]
+        if session.room and session.room.strip():
+            event_lines.append(f"LOCATION:{_escape_ics_text(session.room.strip())}")
 
-        lines.extend(
-            [
-                "BEGIN:VEVENT",
-                f"UID:{uid}",
-                f"DTSTART:{start_str}",
-                f"DTEND:{end_str}",
-                f"SUMMARY:{summary}",
-                f"DESCRIPTION:{description}",
-                f"LOCATION:{location}",
-                "END:VEVENT",
-            ]
-        )
+        event_lines.append("END:VEVENT")
+        lines.extend(event_lines)
 
     lines.append("END:VCALENDAR")
-    return "\r\n".join(lines)
+    return "\r\n".join(_fold_ics_line(line) for line in lines)
+
+
+def print_teacher_classes_summary(
+    classes: list[ClassSession], teacher_name: str, sample_size: int = 15
+) -> None:
+    """Print a summary of a teacher's classes (count + sample of first N)."""
+    print(f"Found {len(classes)} unique classes for {teacher_name}")
+
+    for session in classes[:sample_size]:
+        print(
+            f"  {session.date.strftime('%Y-%m-%d %a')} {session.start_time}-{session.end_time}: "
+            f"{session.subject} ({session.student_group}) Room: {session.room or 'N/A'}"
+        )
+
+    if len(classes) > sample_size:
+        print(f"  ... and {len(classes) - sample_size} more classes")
 
 
 def export_teacher_calendar(
     excel_path: str,
-    teacher_name: str,
+    teacher_code: str,
+    teacher_name: str | None,
     output_path: str | None = None,
 ) -> str:
     """Export a teacher's schedule to an ICS file.
 
     Args:
         excel_path: Path to the Excel timeplan file
-        teacher_name: Teacher identifier (e.g., "RS7", "RS4")
+        teacher_code: String to search for in the Excel (e.g. "RS7", "RS4")
+        teacher_name: Name for the ICS/calendar; if None, defaults to teacher_code
         output_path: Optional output path for the ICS file
 
     Returns:
         Path to the created ICS file
     """
-    classes = extract_classes_for_teacher(excel_path, teacher_name)
-    print(f"Found {len(classes)} unique classes for {teacher_name}")
+    if teacher_name is None:
+        teacher_name = teacher_code
 
-    for session in classes[:15]:  # Print first 15 as sample
-        print(
-            f"  {session.date.strftime('%Y-%m-%d %a')} {session.start_time}-{session.end_time}: "
-            f"{session.subject} ({session.student_group}) Room: {session.room or 'N/A'}"
-        )
-
-    if len(classes) > 15:
-        print(f"  ... and {len(classes) - 15} more classes")
-
-    ics_content = classes_to_ics(classes, teacher_name)
+    classes = extract_classes_for_teacher(
+        excel_path, teacher_code=teacher_code, teacher_name=teacher_name
+    )
+    print_teacher_classes_summary(classes, teacher_name)
 
     if output_path is None:
-        output_path = str(Path(excel_path).parent / f"{teacher_name.lower()}_calendar.ics")
+        output_path = str(Path(excel_path).parent / f"{teacher_code.lower()}_calendar.ics")
 
+    # Main file: always PUBLISH so it can be imported
+    ics_content = classes_to_ics(
+        classes, teacher_name=teacher_name, teacher_code=teacher_code, method="METHOD:PUBLISH"
+    )
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(ics_content)
-
     print(f"Calendar exported to: {output_path}")
+
+    return output_path
+
+
+def export_all_classes_of_teacher(
+    excel_path: str,
+    teacher_name: str,
+    teacher_codes: list[str],
+    output_path: str | None = None,
+    sheet_name: str = "06 Timeplan",
+    invite_emails: bool = False,
+) -> str:
+    """Export a unified ICS file for one teacher with multiple teacher codes.
+
+    Extracts classes for each code in teacher_codes, merges and deduplicates them,
+    then writes a single ICS file with teacher_name and all codes shown in the calendar.
+
+    Args:
+        excel_path: Path to the Excel timeplan file
+        teacher_name: Display name for the ICS/calendar
+        teacher_codes: List of strings to search for in the Excel (e.g. ["RS7", "RS4"])
+        output_path: Optional output path for the ICS file
+        sheet_name: Name of the sheet containing the timeplan
+        invite_emails: If True, add [session.teacher_code] as ATTENDEE
+            for each class session and use METHOD:REQUEST so clients can send invites.
+
+    Returns:
+        Path to the created ICS file
+    """
+    if not teacher_codes:
+        raise ValueError("teacher_codes must contain at least one code")
+
+    all_classes: list[ClassSession] = []
+    seen_keys: set[tuple] = set()
+
+    for code in teacher_codes:
+        classes = extract_classes_for_teacher(
+            excel_path,
+            teacher_code=code,
+            teacher_name=teacher_name,
+            sheet_name=sheet_name,
+        )
+        for c in classes:
+            key = (
+                c.date.date(),
+                c.start_time,
+                c.end_time,
+                c.subject,
+                c.student_group or "Unknown",
+            )
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            all_classes.append(c)
+
+    all_classes = _merge_sequential_slots(all_classes)
+    all_classes.sort(key=lambda c: (c.date, c.start_time))
+
+    print_teacher_classes_summary(all_classes, teacher_name)
+
+    if output_path is None:
+        safe_name = (
+            "".join(c if c.isalnum() else "_" for c in teacher_name.lower()).strip("_") or "teacher"
+        )
+        output_path = str(Path(excel_path).parent / f"{safe_name}_calendar.ics")
+
+    # Use METHOD:PUBLISH so Outlook can import the file; REQUEST often fails on file import
+    method = "METHOD:PUBLISH"
+    organizer_email: str | None = None
+    if invite_emails and teacher_codes:
+        first_code = teacher_codes[0]
+        first_emails = _emails_for_teacher(first_code)
+        organizer_email = first_emails[0] if first_emails else None
+    ics_content = classes_to_ics(
+        all_classes,
+        teacher_name=teacher_name,
+        method=method,
+        invite_emails=invite_emails,
+        organizer_email=organizer_email,
+    )
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(ics_content)
+    print(f"Unified calendar exported to: {output_path}")
+
     return output_path
 
 
 if __name__ == "__main__":
     """Main function to extract calendars for RS7 and RS4."""
     # excel_file = Path(__file__).parent / "01 Timeplan BYGG 2025-2026.xlsx"
-    excel_file = Path("/Users/george/Downloads/01 Timeplan BYGG 2025-2026.xlsx")
+    excel_file = Path("/Users/george/Downloads/1.01 Timeplan BYGG 2025-2026 (4).xlsx")
 
     if not excel_file.exists():
         raise FileNotFoundError(f"Excel file not found: {excel_file}")
@@ -547,15 +710,16 @@ if __name__ == "__main__":
     print(f"Processing: {excel_file}")
     print()
 
-    # Export RS7 calendar
+    # Export GK91 calendar
     print("=" * 60)
-    print("Extracting RS7 calendar")
+    print("Extracting GK91 calendar")
     print("=" * 60)
-    export_teacher_calendar(str(excel_file), "RS7")
+    # export_teacher_calendar(str(excel_file), "RS7", teacher_name="Rand")
+    export_all_classes_of_teacher(str(excel_file), "Rand", ["RS4", "RS7"], invite_emails=False)
     print()
 
-    # Export RS4 calendar
+    """# Export RS4 calendar
     print("=" * 60)
     print("Extracting RS4 calendar")
     print("=" * 60)
-    export_teacher_calendar(str(excel_file), "RS4")
+    export_teacher_calendar(str(excel_file), "RS4")"""
