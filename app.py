@@ -1,14 +1,14 @@
-"""Web app: upload Excel timeplan, choose teacher(s), download ICS calendar(s)."""
+"""Web app: upload Excel timeplan, enter teacher name and code(s), download one unified ICS calendar."""
 
 import io
+import os
 import tempfile
-import zipfile
 from pathlib import Path
 
 import openpyxl
 from flask import Flask, request, send_file, jsonify
 
-from excel2ics import extract_classes_for_teacher, classes_to_ics
+from excel2ics import export_all_classes_of_teacher
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB
@@ -27,7 +27,7 @@ def index():
 
 @app.route("/api/convert", methods=["POST"])
 def convert():
-    """Accept Excel file + teacher code(s); return ICS or ZIP of ICS files."""
+    """Accept Excel file + teacher name + teacher code(s); return one unified ICS."""
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
     file = request.files["file"]
@@ -36,63 +36,70 @@ def convert():
     if not allowed_file(file.filename):
         return jsonify({"error": "Only .xlsx and .xls files are allowed"}), 400
 
-    teachers_raw = request.form.get("teachers", "").strip()
-    if not teachers_raw:
+    teacher_name = request.form.get("teacher_name", "").strip()
+    if not teacher_name:
+        return jsonify({"error": "Teacher name is required"}), 400
+
+    teacher_codes_raw = request.form.get("teacher_codes", "").strip()
+    if not teacher_codes_raw:
         return jsonify({"error": "Enter at least one teacher code (e.g. RS7, RS4)"}), 400
-    teachers = [t.strip() for t in teachers_raw.split(",") if t.strip()]
-    if not teachers:
+    teacher_codes = [c.strip() for c in teacher_codes_raw.split(",") if c.strip()]
+    if not teacher_codes:
         return jsonify({"error": "Enter at least one teacher code"}), 400
 
     sheet_name = request.form.get("sheet", "").strip() or "06 Timeplan"
     tmp_path = None
+    tmp_ics_path = None
 
     try:
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             file.save(tmp.name)
             tmp_path = tmp.name
 
-        # Check that the sheet exists and give a helpful error if not
         wb = openpyxl.load_workbook(tmp_path, data_only=True, read_only=True)
         if sheet_name not in wb.sheetnames:
             wb.close()
-            return jsonify({
-                "error": f"Sheet '{sheet_name}' not found. Available sheets: {', '.join(wb.sheetnames)}"
-            }), 400
+            return jsonify(
+                {
+                    "error": f"Sheet '{sheet_name}' not found. Available sheets: {', '.join(wb.sheetnames)}"
+                }
+            ), 400
         wb.close()
 
-        results = {}
-        for teacher in teachers:
-            classes = extract_classes_for_teacher(tmp_path, teacher, sheet_name=sheet_name)
-            ics_content = classes_to_ics(classes, teacher)
-            results[teacher] = ics_content
+        fd, tmp_ics_path = tempfile.mkstemp(suffix=".ics")
+        os.close(fd)
+
+        export_all_classes_of_teacher(
+            tmp_path,
+            teacher_name=teacher_name,
+            teacher_codes=teacher_codes,
+            output_path=tmp_ics_path,
+            sheet_name=sheet_name,
+            invite_emails=False,
+        )
+
+        with open(tmp_ics_path, encoding="utf-8") as f:
+            ics_content = f.read()
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
+        if tmp_ics_path:
+            Path(tmp_ics_path).unlink(missing_ok=True)
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
 
-    if len(teachers) == 1:
-        teacher = teachers[0]
-        buf = io.BytesIO(results[teacher].encode("utf-8"))
-        filename = f"{teacher.lower().replace(' ', '_')}_calendar.ics"
-        return send_file(
-            buf,
-            mimetype="text/calendar",
-            as_attachment=True,
-            download_name=filename,
-        )
-
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for teacher, ics_content in results.items():
-            filename = f"{teacher.lower().replace(' ', '_')}_calendar.ics"
-            zf.writestr(filename, ics_content.encode("utf-8"))
-    zip_buf.seek(0)
+    safe_name = (
+        "".join(c if c.isalnum() else "_" for c in teacher_name.lower()).strip("_") or "calendar"
+    )
+    filename = f"{safe_name}_calendar.ics"
+    # UTF-8 with BOM for Outlook compatibility
+    ics_bytes = ics_content.encode("utf-8")
+    buf = io.BytesIO(b"\xef\xbb\xbf" + ics_bytes)
     return send_file(
-        zip_buf,
-        mimetype="application/zip",
+        buf,
+        mimetype="text/calendar; charset=utf-8",
         as_attachment=True,
-        download_name="teacher_calendars.ics.zip",
+        download_name=filename,
     )
 
 
